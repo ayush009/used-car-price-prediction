@@ -10,3 +10,4 @@ joblib
 streamlit
 seaborn
 jupyter
+requests
