@@ -8,6 +8,7 @@ import joblib
 import datetime
 from pathlib import Path
 import base64
+import requests  # keep: we’re using the GitHub RAW image URL
 
 # ============ CONFIG ============
 st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon="🚗", layout="centered")
@@ -16,10 +17,8 @@ st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon=
 MODEL_PATH = Path("results/models/RF_app_best_model.pkl")
 CSV_PATH   = Path(r"C:\Users\aayus\Documents\Used_Car_Price_Prediction\Used_Car_Price_Prediction.csv")
 
-# Your GitHub image (RAW) — converted automatically from the page URL you sent
-# Page URL (for reference): https://github.com/ayush009/used-car-price-prediction/blob/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg
+# Your GitHub image (RAW) — DO NOT CHANGE (per your request)
 BG_URL_RAW = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg"
-
 
 # Accent palette (picked to complement the parking-lot image: greens on charcoal)
 ACCENT     = "#10b981"  # emerald
@@ -30,14 +29,15 @@ BORDER     = "rgba(16,185,129,0.45)"
 
 
 # ============ BACKGROUND ============
-def set_background(image_path: str, dim: float = 0.40):
-    """Embed a full-bleed background from a local file, with a dark gradient overlay."""
+def set_background_from_url(url: str, dim: float = 0.40):
+    """Embed a full-bleed background fetched from a URL, with a dark gradient overlay."""
     try:
-        with open(image_path, "rb") as f:
-            data = f.read()
+        r = requests.get(url, timeout=20)
+        r.raise_for_status()
+        data = r.content
         b64 = base64.b64encode(data).decode()
     except Exception as e:
-        st.error("Failed to load background image. Update LOCAL_BG.")
+        st.error("Failed to load background image. (GitHub RAW URL)")
         with st.expander("Image error details"):
             st.code(repr(e))
         b64 = ""
@@ -184,7 +184,8 @@ def set_background(image_path: str, dim: float = 0.40):
     """
     st.markdown(css, unsafe_allow_html=True)
 
-set_background(LOCAL_BG, dim=0.40)
+# Inject background using the (unchanged) GitHub RAW URL
+set_background_from_url(BG_URL_RAW, dim=0.40)
 
 # ============ HEADER ============
 st.markdown(
