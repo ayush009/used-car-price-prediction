@@ -16,7 +16,7 @@ st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon=
 
 # --- Paths (change as needed) ---
 MODEL_PATH = Path("results/models/RF_app_best_model.pkl")
-# Use your GitHub RAW CSV by default (portable); swap to a local path if you prefer
+# Portable CSV (RAW GitHub). If you want local, point to your file path.
 CSV_PATH = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/data/Used_Car_Price_Prediction.csv"
 
 # Background image (unchanged per your request)
@@ -164,7 +164,7 @@ st.markdown(
     """
     <div class="dw-card dw-fadein" style="margin-top:.2rem;">
       <p style="margin:0;">
-        Get a fast, data-driven estimate of your vehicle’s resale value — with smart, dependent dropdowns for make/model, fuel/transmission/body, and state/city. Options always come from the dataset.
+        Get a fast, data-driven estimate of your vehicle’s resale value — all dropdowns pull valid options from the dataset and update dependently.
       </p>
     </div>
     """,
@@ -188,7 +188,7 @@ def load_df(csv_path):
     needed = [
         "make", "model", "fuel_type", "transmission", "body_type",
         "registered_city", "registered_state", "total_owners",
-        "kms_run", "year"  # your CSV may use "year"
+        "kms_run", "year"
     ]
     for c in needed:
         if c not in df.columns:
@@ -198,28 +198,27 @@ def load_df(csv_path):
     for c in ["make", "model", "fuel_type", "transmission", "body_type", "registered_city", "registered_state"]:
         df[c] = df[c].astype(str).str.lower().str.strip()
 
-    # numeric cleanups
     # owners: extract first int (handles "2 owners") and clip to >=1
     owners_raw = df["total_owners"].astype(str).str.extract(r"(\d+)", expand=False)
     df["total_owners"] = pd.to_numeric(owners_raw, errors="coerce").clip(lower=1)
+
     # kms
     df["kms_run"] = pd.to_numeric(df["kms_run"], errors="coerce")
-    # year (yr_mfr)
+
+    # year / yr_mfr
     if "yr_mfr" in df.columns:
         df["yr_mfr"] = pd.to_numeric(df["yr_mfr"], errors="coerce")
     else:
         df["yr_mfr"] = pd.to_numeric(df["year"], errors="coerce")
 
-    # drop rows with missing criticals for filtering
     return df
 
 df_all = load_df(CSV_PATH)
 
 
 # ============ HELPERS ============
-
 def filtered(df, **conds):
-    """Return df filtered by non-empty equalities on provided columns (all lowercased strings)."""
+    """Return df filtered by equality on provided columns (strings lowercased)."""
     if df.empty:
         return df
     mask = pd.Series(True, index=df.index)
@@ -232,7 +231,6 @@ def filtered(df, **conds):
     return df.loc[mask]
 
 def options_from(df, col):
-    """Unique sorted non-null options from a column."""
     if df.empty or col not in df.columns:
         return []
     opts = sorted(x for x in df[col].dropna().unique().tolist() if str(x).strip() and str(x).lower().strip() != "nan")
@@ -242,22 +240,19 @@ def owners_options(df):
     if df.empty or "total_owners" not in df.columns:
         return [1, 2, 3]
     vals = (
-        df["total_owners"]
-        .dropna()
-        .astype(int)
-        .clip(lower=1)
-        .unique()
-        .tolist()
+        df["total_owners"].dropna().astype(int).clip(lower=1).unique().tolist()
     )
     vals = sorted(set(vals)) or [1, 2, 3]
     return vals
 
 def safe_index(options, value):
-    """Return index of value in options or 0."""
     try:
         return options.index(value)
     except Exception:
         return 0
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
 
 
 # ============ MODEL ============
@@ -297,12 +292,12 @@ transmission = st.selectbox("Transmission", options=transmissions or ["manual"])
 bodies = options_from(df_car, "body_type")
 body_type = st.selectbox("Body Type", options=bodies or ["sedan"])
 
-# 3) Owners (from chosen make+model, after fuel/trans/body filter if present)
+# 3) Owners (from chosen make+model and F/T/B filter)
 df_car_ftb = filtered(df_car, fuel_type=fuel_type, transmission=transmission, body_type=body_type)
 owner_opts = owners_options(df_car_ftb if not df_car_ftb.empty else df_car)
 total_owners = st.selectbox("Number of Previous Owners", options=owner_opts, index=min(len(owner_opts)//2, len(owner_opts)-1))
 
-# 4) State → City (from full dataset or constrained by make/model if you prefer)
+# 4) State → City (dataset-driven)
 states = options_from(df_all, "registered_state")
 registered_state = st.selectbox("Registered State", options=states or ["berlin"])
 df_state = filtered(df_all, registered_state=registered_state)
@@ -310,15 +305,38 @@ df_state = filtered(df_all, registered_state=registered_state)
 cities = options_from(df_state, "registered_city")
 city = st.selectbox("Registered City", options=cities or ["berlin"])
 
-# 5) Year & KMs — default ranges from dataset (but user can override)
+# 5) Year & KMs — bounds from the filtered car subset (robust clamping)
 this_year = datetime.datetime.now().year
-yr_min = int(np.nanmin(df_car["yr_mfr"])) if not df_car["yr_mfr"].dropna().empty else 1990
-yr_max = int(np.nanmax(df_car["yr_mfr"])) if not df_car["yr_mfr"].dropna().empty else this_year
-yr_mfr = st.number_input("Year of Manufacture", min_value=max(1990, yr_min), max_value=max(yr_max, 1990), value=min(2018, max(yr_max, 1990)), step=1)
 
-kms_min = int(np.nanmin(df_car["kms_run"])) if not df_car["kms_run"].dropna().empty else 0
-kms_max = int(np.nanmax(df_car["kms_run"])) if not df_car["kms_run"].dropna().empty else 1_000_000
-kms_run = st.number_input("Kilometers Driven", min_value=max(0, kms_min), max_value=max(1000, kms_max), value=min(45_000, max(1000, kms_max)), step=500)
+yr_series = df_car_ftb["yr_mfr"].dropna().astype(int) if not df_car_ftb.empty else df_car["yr_mfr"].dropna().astype(int)
+yr_min = int(yr_series.min()) if not yr_series.empty else 1990
+yr_max = int(yr_series.max()) if not yr_series.empty else this_year
+year_lo = max(1990, yr_min)
+year_hi = max(year_lo, yr_max)
+year_default = clamp(2018, year_lo, year_hi)
+
+yr_mfr = st.number_input(
+    "Year of Manufacture",
+    min_value=int(year_lo),
+    max_value=int(year_hi),
+    value=int(year_default),
+    step=1,
+)
+
+kms_series = df_car_ftb["kms_run"].dropna().astype(int) if not df_car_ftb.empty else df_car["kms_run"].dropna().astype(int)
+kms_min = int(kms_series.min()) if not kms_series.empty else 0
+kms_max = int(kms_series.max()) if not kms_series.empty else 1_000_000
+kms_lo = max(0, kms_min)
+kms_hi = max(kms_lo + 500, kms_max)  # ensure hi >= lo + step
+kms_default = clamp(45_000, kms_lo, kms_hi)
+
+kms_run = st.number_input(
+    "Kilometers Driven",
+    min_value=int(kms_lo),
+    max_value=int(kms_hi),
+    value=int(kms_default),
+    step=500,
+)
 
 st.markdown("</div>", unsafe_allow_html=True)  # /dw-card
 
