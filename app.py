@@ -15,7 +15,9 @@ st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon=
 
 # Update these for your environment
 MODEL_PATH = Path("results/models/RF_app_best_model.pkl")
-CSV_PATH   = Path(r"C:\Users\aayus\Documents\Used_Car_Price_Prediction\Used_Car_Price_Prediction.csv")
+# Use raw GitHub CSV instead of local file
+CSV_PATH = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/data/Used_Car_Price_Prediction.csv"
+
 
 # Your GitHub image (RAW) — DO NOT CHANGE
 BG_URL_RAW = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg"
