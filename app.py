@@ -9,6 +9,35 @@ import datetime
 from pathlib import Path
 import base64
 import requests  # keep: we’re using the GitHub RAW image URL
+# ===== Live FX: INR → EUR =====
+import json, time
+
+@st.cache_data(ttl=300, show_spinner=False)  # refresh every 5 minutes
+def fetch_fx_inr_eur():
+    """
+    Returns (rate_inr_to_eur, rate_eur_to_inr, iso_timestamp).
+    Tries 2 public endpoints; falls back to a static rate if offline.
+    """
+    urls = [
+        "https://api.exchangerate.host/latest?base=INR&symbols=EUR",
+        "https://api.frankfurter.app/latest?from=INR&to=EUR",
+    ]
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=8)
+            r.raise_for_status()
+            data = r.json()
+            # normalize response
+            if "rates" in data and ("EUR" in data["rates"]):
+                rate = float(data["rates"]["EUR"])
+                ts = data.get("date") or data.get("time_last_update_utc") or time.strftime("%Y-%m-%d")
+                return rate, (1.0 / rate), ts
+        except Exception:
+            continue
+
+    # Fallback if APIs unreachable
+    fallback = 0.011  # ~1 INR ≈ 0.011 EUR (update if needed)
+    return fallback, (1.0 / fallback), "offline-fallback"
 
 # ============ CONFIG ============
 st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon="🚗", layout="centered")
@@ -384,12 +413,27 @@ if clicked:
         st.error("No model loaded — cannot predict. Verify your model path.")
     else:
         try:
-            pred = float(pipe.predict(X_one)[0])
-            st.balloons()
-            st.markdown(f'<div class="dw-card dw-fadein" style="margin-top:12px;">'
-                        f'<div class="dw-price">💰 Estimated Resale Value: €{pred:,.0f}</div>'
-                        f'<div class="dw-kicker">Note: Currency equals the dataset’s units; treat as an index if markets are mixed.</div>'
-                        f'</div>', unsafe_allow_html=True)
+            pred_inr = float(pipe.predict(X_one)[0])
+rate_inr_eur, rate_eur_inr, ts = fetch_fx_inr_eur()
+pred_eur = pred_inr * rate_inr_eur
+
+st.balloons()
+st.markdown(
+    f'''
+    <div class="dw-card dw-fadein" style="margin-top:12px;">
+      <div class="dw-price">
+        💰 Estimated Resale Value:
+        ₹{pred_inr:,.0f} <span style="opacity:.85;">(€{pred_eur:,.0f})</span>
+      </div>
+      <div class="dw-kicker">
+        FX now: <b>1 INR = {rate_inr_eur:.6f} EUR</b> • <b>1 EUR = {rate_eur_inr:.4f} INR</b>
+        &nbsp;|&nbsp; <span style="opacity:.85;">Updated: {ts}</span>
+      </div>
+    </div>
+    ''',
+    unsafe_allow_html=True,
+)
+
         except Exception as e:
             st.error("Prediction failed. The model may expect different columns/formats.")
             with st.expander("Show error details"):
