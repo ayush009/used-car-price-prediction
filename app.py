@@ -17,10 +17,10 @@ st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon=
 MODEL_PATH = Path("results/models/RF_app_best_model.pkl")
 CSV_PATH   = Path(r"C:\Users\aayus\Documents\Used_Car_Price_Prediction\Used_Car_Price_Prediction.csv")
 
-# Your GitHub image (RAW) — DO NOT CHANGE (per your request)
+# Your GitHub image (RAW) — DO NOT CHANGE
 BG_URL_RAW = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg"
 
-# Accent palette (picked to complement the parking-lot image: greens on charcoal)
+# Accent palette
 ACCENT     = "#10b981"  # emerald
 ACCENT_SOFT= "rgba(16,185,129,0.25)"
 INK        = "#e5f8f1"  # very light mint ink on dark bg
@@ -180,11 +180,26 @@ def set_background_from_url(url: str, dim: float = 0.40):
         0% {{ opacity: 0; transform: translateY(10px); }}
         100% {{ opacity: 1; transform: translateY(0); }}
       }}
+
+      /* --- FIX selectbox dropdown menu visibility & contrast --- */
+      html, body, .stApp, .stApp .block-container {{ overflow: visible !important; }}
+      .stApp [data-baseweb="popover"] {{ z-index: 999999 !important; }}
+      .stApp [data-baseweb="menu"] {{
+        background: rgba(2,6,23,0.92);
+        border: 1px solid rgba(148,163,184,0.35);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+      }}
+      .stApp [data-baseweb="menu"] [role="option"] {{ color: var(--ink); }}
+      .stApp [data-baseweb="menu"] [role="option"][aria-selected="true"],
+      .stApp [data-baseweb="menu"] [role="option"]:hover {{
+        background: rgba(16,185,129,0.18);
+      }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# Inject background using the (unchanged) GitHub RAW URL
+# Inject background using the GitHub RAW URL
 set_background_from_url(BG_URL_RAW, dim=0.40)
 
 # ============ HEADER ============
@@ -368,7 +383,7 @@ if clicked:
     else:
         try:
             pred = float(pipe.predict(X_one)[0])
-            st.balloons()  # celebratory animation
+            st.balloons()
             st.markdown(f'<div class="dw-card dw-fadein" style="margin-top:12px;">'
                         f'<div class="dw-price">💰 Estimated Resale Value: €{pred:,.0f}</div>'
                         f'<div class="dw-kicker">Note: Currency equals the dataset’s units; treat as an index if markets are mixed.</div>'
