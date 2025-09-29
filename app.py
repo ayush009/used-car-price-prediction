@@ -9,9 +9,29 @@ import datetime
 from pathlib import Path
 import base64
 import requests  # keep: we’re using the GitHub RAW image URL
-# ===== Live FX: INR → EUR =====
-import json, time
+import time
+import re
 
+# ============ CONFIG ============
+st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon="🚗", layout="centered")
+
+# Update these for your environment
+MODEL_PATH = Path("results/models/RF_app_best_model.pkl")
+# Using RAW GitHub CSV makes the app portable (no local path dependency)
+CSV_PATH = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/data/Used_Car_Price_Prediction.csv"
+
+# Your GitHub image (RAW) — DO NOT CHANGE
+BG_URL_RAW = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg"
+
+# Accent palette
+ACCENT      = "#10b981"  # emerald
+ACCENT_SOFT = "rgba(16,185,129,0.25)"
+INK         = "#e5f8f1"  # very light mint ink on dark bg
+PANEL       = "rgba(17,24,39,0.55)"  # glass dark
+BORDER      = "rgba(16,185,129,0.45)"
+
+
+# ===== Live FX: INR → EUR =====
 @st.cache_data(ttl=300, show_spinner=False)  # refresh every 5 minutes
 def fetch_fx_inr_eur():
     """
@@ -27,7 +47,6 @@ def fetch_fx_inr_eur():
             r = requests.get(url, timeout=8)
             r.raise_for_status()
             data = r.json()
-            # normalize response
             if "rates" in data and ("EUR" in data["rates"]):
                 rate = float(data["rates"]["EUR"])
                 ts = data.get("date") or data.get("time_last_update_utc") or time.strftime("%Y-%m-%d")
@@ -36,27 +55,8 @@ def fetch_fx_inr_eur():
             continue
 
     # Fallback if APIs unreachable
-    fallback = 0.011  # ~1 INR ≈ 0.011 EUR (update if needed)
+    fallback = 0.011  # ~1 INR ≈ 0.011 EUR (adjust if you like)
     return fallback, (1.0 / fallback), "offline-fallback"
-
-# ============ CONFIG ============
-st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon="🚗", layout="centered")
-
-# Update these for your environment
-MODEL_PATH = Path("results/models/RF_app_best_model.pkl")
-# Use raw GitHub CSV instead of local file
-CSV_PATH = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/data/Used_Car_Price_Prediction.csv"
-
-
-# Your GitHub image (RAW) — DO NOT CHANGE
-BG_URL_RAW = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg"
-
-# Accent palette
-ACCENT     = "#10b981"  # emerald
-ACCENT_SOFT= "rgba(16,185,129,0.25)"
-INK        = "#e5f8f1"  # very light mint ink on dark bg
-PANEL      = "rgba(17,24,39,0.55)"  # glass dark
-BORDER     = "rgba(16,185,129,0.45)"
 
 
 # ============ BACKGROUND ============
@@ -233,6 +233,7 @@ def set_background_from_url(url: str, dim: float = 0.40):
 # Inject background using the GitHub RAW URL
 set_background_from_url(BG_URL_RAW, dim=0.40)
 
+
 # ============ HEADER ============
 st.markdown(
     """
@@ -255,13 +256,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
 # ============ LOADERS ============
 @st.cache_resource
 def load_model():
     return joblib.load(MODEL_PATH.as_posix())
 
 @st.cache_data
-def load_dropdown_maps(csv_path: Path):
+def load_dropdown_maps(csv_path):
     """Return dropdown sources normalized to lowercase."""
     try:
         df = pd.read_csv(csv_path, low_memory=False)
@@ -305,6 +307,7 @@ except Exception as _e:
         st.code(repr(_e))
 
 brands, brand_to_models, states, state_to_cities = load_dropdown_maps(CSV_PATH)
+
 
 # ============ FORM ============
 st.markdown('<div class="dw-card dw-fadein">', unsafe_allow_html=True)
@@ -365,6 +368,7 @@ else:
 
 st.markdown("</div>", unsafe_allow_html=True)  # /dw-card
 
+
 # Live preview card
 car_age = datetime.datetime.now().year - int(yr_mfr)
 st.markdown(
@@ -406,6 +410,7 @@ row = {
 }
 X_one = pd.DataFrame([row])
 
+
 # ============ PREDICT ============
 clicked = st.button("Estimate Value", use_container_width=True)
 if clicked:
@@ -414,30 +419,30 @@ if clicked:
     else:
         try:
             pred_inr = float(pipe.predict(X_one)[0])
-rate_inr_eur, rate_eur_inr, ts = fetch_fx_inr_eur()
-pred_eur = pred_inr * rate_inr_eur
+            rate_inr_eur, rate_eur_inr, ts = fetch_fx_inr_eur()
+            pred_eur = pred_inr * rate_inr_eur
 
-st.balloons()
-st.markdown(
-    f'''
-    <div class="dw-card dw-fadein" style="margin-top:12px;">
-      <div class="dw-price">
-        💰 Estimated Resale Value:
-        ₹{pred_inr:,.0f} <span style="opacity:.85;">(€{pred_eur:,.0f})</span>
-      </div>
-      <div class="dw-kicker">
-        FX now: <b>1 INR = {rate_inr_eur:.6f} EUR</b> • <b>1 EUR = {rate_eur_inr:.4f} INR</b>
-        &nbsp;|&nbsp; <span style="opacity:.85;">Updated: {ts}</span>
-      </div>
-    </div>
-    ''',
-    unsafe_allow_html=True,
-)
-
+            st.balloons()
+            st.markdown(
+                f'''
+                <div class="dw-card dw-fadein" style="margin-top:12px;">
+                  <div class="dw-price">
+                    💰 Estimated Resale Value:
+                    ₹{pred_inr:,.0f} <span style="opacity:.85;">(€{pred_eur:,.0f})</span>
+                  </div>
+                  <div class="dw-kicker">
+                    FX now: <b>1 INR = {rate_inr_eur:.6f} EUR</b> • <b>1 EUR = {rate_eur_inr:.4f} INR</b>
+                    &nbsp;|&nbsp; <span style="opacity:.85;">Updated: {ts}</span>
+                  </div>
+                </div>
+                ''',
+                unsafe_allow_html=True,
+            )
         except Exception as e:
             st.error("Prediction failed. The model may expect different columns/formats.")
             with st.expander("Show error details"):
                 st.code(repr(e))
+
 
 # ============ FOOTER ============
 st.markdown(
