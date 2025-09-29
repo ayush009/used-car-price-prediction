@@ -1,5 +1,5 @@
 # app.py — DriveWorth • Used Car Value Studio
-# Supercharged Streamlit UI: glassmorphism, animated header, themed controls, dependent dropdowns, background image (from GitHub URL)
+# Supercharged Streamlit UI: glassmorphism, animated header, themed controls, dependent dropdowns, background image
 
 import streamlit as st
 import pandas as pd
@@ -8,7 +8,6 @@ import joblib
 import datetime
 from pathlib import Path
 import base64
-import requests  # for fetching the image from GitHub
 
 # ============ CONFIG ============
 st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon="🚗", layout="centered")
@@ -21,51 +20,28 @@ CSV_PATH   = Path(r"C:\Users\aayus\Documents\Used_Car_Price_Prediction\Used_Car_
 # Page URL (for reference): https://github.com/ayush009/used-car-price-prediction/blob/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg
 BG_URL_RAW = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg"
 
-# Optional local fallback (leave as-is or place a file at this path)
-LOCAL_BG   = Path(__file__).parent / "Images" / "bg.jpg"
 
 # Accent palette (picked to complement the parking-lot image: greens on charcoal)
-ACCENT      = "#10b981"  # emerald
-ACCENT_SOFT = "rgba(16,185,129,0.25)"
-INK         = "#e5f8f1"  # very light mint ink on dark bg
-PANEL       = "rgba(17,24,39,0.55)"  # glass dark
-BORDER      = "rgba(16,185,129,0.45)"
+ACCENT     = "#10b981"  # emerald
+ACCENT_SOFT= "rgba(16,185,129,0.25)"
+INK        = "#e5f8f1"  # very light mint ink on dark bg
+PANEL      = "rgba(17,24,39,0.55)"  # glass dark
+BORDER     = "rgba(16,185,129,0.45)"
 
 
 # ============ BACKGROUND ============
-@st.cache_data(show_spinner=False)
-def _fetch_image_bytes(url: str) -> bytes | None:
+def set_background(image_path: str, dim: float = 0.40):
+    """Embed a full-bleed background from a local file, with a dark gradient overlay."""
     try:
-        r = requests.get(url, timeout=20)
-        r.raise_for_status()
-        return r.content
-    except Exception:
-        return None
-
-def set_background(url: str | None = None, local_fallback: Path | None = None, dim: float = 0.40):
-    """Use URL bytes if available; otherwise try local file; then inject CSS background."""
-    data: bytes | None = None
-
-    # Try URL first
-    if url:
-        data = _fetch_image_bytes(url)
-
-    # Try local fallback
-    if data is None and local_fallback is not None:
-        try:
-            with open(local_fallback, "rb") as f:
-                data = f.read()
-        except Exception:
-            data = None
-
-    if data is None:
-        st.error("Failed to load background image from URL and local fallback.")
+        with open(image_path, "rb") as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode()
+    except Exception as e:
+        st.error("Failed to load background image. Update LOCAL_BG.")
         with st.expander("Image error details"):
-            st.write("Tried URL:", url)
-            st.write("Local fallback:", str(local_fallback) if local_fallback else None)
-        return
+            st.code(repr(e))
+        b64 = ""
 
-    b64 = base64.b64encode(data).decode()
     dim = max(0.0, min(1.0, float(dim)))
     css = f"""
     <style>
@@ -208,8 +184,7 @@ def set_background(url: str | None = None, local_fallback: Path | None = None, d
     """
     st.markdown(css, unsafe_allow_html=True)
 
-# Use the GitHub RAW URL; if it fails for any reason, try local ./Images/bg.jpg
-set_background(BG_URL_RAW, local_fallback=LOCAL_BG, dim=0.40)
+set_background(LOCAL_BG, dim=0.40)
 
 # ============ HEADER ============
 st.markdown(
@@ -393,15 +368,10 @@ if clicked:
         try:
             pred = float(pipe.predict(X_one)[0])
             st.balloons()  # celebratory animation
-            st.markdown(
-                f'''
-                <div class="dw-card dw-fadein" style="margin-top:12px;">
-                  <div class="dw-price">💰 Estimated Resale Value: €{pred:,.0f}</div>
-                  <div class="dw-kicker">Note: Currency equals the dataset’s units; treat as an index if markets are mixed.</div>
-                </div>
-                ''',
-                unsafe_allow_html=True,
-            )
+            st.markdown(f'<div class="dw-card dw-fadein" style="margin-top:12px;">'
+                        f'<div class="dw-price">💰 Estimated Resale Value: €{pred:,.0f}</div>'
+                        f'<div class="dw-kicker">Note: Currency equals the dataset’s units; treat as an index if markets are mixed.</div>'
+                        f'</div>', unsafe_allow_html=True)
         except Exception as e:
             st.error("Prediction failed. The model may expect different columns/formats.")
             with st.expander("Show error details"):
@@ -412,7 +382,7 @@ st.markdown(
     """
     <div class="dw-fadein" style="text-align:center; margin-top:12px; opacity:.85;">
       <small style="color:var(--ink);">
-        DriveWorth • Powered by your trained model. Background loaded from your GitHub image. <br/>
+        DriveWorth • Powered by your trained model. Background: local Unsplash image. <br/>
         UI theme crafted for high contrast over dark asphalt + green foliage.
       </small>
     </div>
