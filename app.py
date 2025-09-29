@@ -315,7 +315,7 @@ col3, col4 = st.columns(2)
 with col3:
     total_owners = st.number_input(
         "Number of Previous Owners",
-        min_value=0, max_value=3, value=1, step=1
+        min_value=1, max_value=3, value=1, step=1
     )
 with col4:
     pass  # balance
