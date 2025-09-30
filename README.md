@@ -36,7 +36,7 @@ Includes **data cleaning, feature engineering, model training, explainability (S
 
 ## 📂 Project Structure
 
-...
+```
 
 ├── app.py                # Streamlit UI
 ├── requirements.txt
@@ -51,7 +51,7 @@ Includes **data cleaning, feature engineering, model training, explainability (S
 │       └── pdp_car_age.png
 └── notebooks/            # Training & EDA
 
-...
+```
 
 ---
 
