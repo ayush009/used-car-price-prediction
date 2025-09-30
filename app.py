@@ -13,10 +13,12 @@ import base64, requests, time
 st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon="🚗", layout="centered")
 
 MODEL_PATH = Path("results/models/RF_app_best_model.pkl")
-CSV_PATH   = Path("Used_Car_Price_Prediction.csv")  # local file in repo or uploaded
+CSV_PATH   = Path("Used_Car_Price_Prediction.csv")  # local file expected next to app.py
 
+# Background image (unchanged)
 BG_URL_RAW = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg"
 
+# Theme
 ACCENT      = "#10b981"
 ACCENT_SOFT = "rgba(16,185,129,0.25)"
 INK         = "#e5f8f1"
@@ -53,10 +55,12 @@ def set_background_from_url(url: str, dim: float = 0.40):
         animation:hueRotate 10s linear infinite;
       }}
       @keyframes hueRotate {{ 0%{{filter:hue-rotate(0)}} 100%{{filter:hue-rotate(360deg)}} }}
-      .dw-card {{ background:var(--panel); border:1px solid var(--border); border-radius:18px; padding:1rem; backdrop-filter: blur(12px); }}
+      .dw-card {{ background:var(--panel); border:1px solid var(--border);
+                 border-radius:18px; padding:1rem; backdrop-filter: blur(12px); }}
       .dw-card * {{ color:var(--ink) !important; }}
       .stSelectbox > div > div, .stTextInput > div > div, .stNumberInput > div > div {{
-        background: rgba(2,6,23,0.55); border:1px solid rgba(148,163,184,0.22); color:var(--ink); border-radius:12px;
+        background: rgba(2,6,23,0.55); border:1px solid rgba(148,163,184,0.22);
+        color:var(--ink); border-radius:12px;
       }}
       .stSelectbox:hover > div > div, .stTextInput:hover > div > div, .stNumberInput:hover > div > div {{
         border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
@@ -78,6 +82,7 @@ def set_background_from_url(url: str, dim: float = 0.40):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_fx_inr_eur():
+    """Live INR→EUR; fallback if offline."""
     urls = [
         "https://api.exchangerate.host/latest?base=INR&symbols=EUR",
         "https://api.frankfurter.app/latest?from=INR&to=EUR",
@@ -110,36 +115,51 @@ def filtered(df: pd.DataFrame, **eq):
     return df[m]
 
 
-# ============ DATA LOADER ============
+# ============ DATA LOADER (no upload UI) ============
 RAW_GITHUB_CSV = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/data/Used_Car_Price_Prediction.csv"
-CSV_CANDIDATES = [CSV_PATH, Path(__file__).parent / CSV_PATH.name, Path("/mount/data/") / CSV_PATH.name, RAW_GITHUB_CSV]
+CSV_CANDIDATES = [
+    CSV_PATH,                                 # your given path
+    Path(__file__).parent / CSV_PATH.name,    # same folder as app.py
+    Path("/mount/data/") / CSV_PATH.name,     # Streamlit Cloud Files tab
+    RAW_GITHUB_CSV,                           # fallback URL
+]
 
 @st.cache_data(show_spinner=False)
 def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip().str.lower().str.replace(r"\s+", "_", regex=True)
-    for c in ["make","model","fuel_type","transmission","body_type","registered_city","registered_state","city"]:
+    # Fill & normalize text columns
+    for c in ["make","model","fuel_type","transmission","body_type",
+              "registered_city","registered_state","city"]:
         if c not in df.columns: df[c] = np.nan
         df[c] = df[c].astype(str).str.lower().str.strip()
+    # Owners numeric & capped (remove 5+ outliers)
     df["total_owners"] = pd.to_numeric(df["total_owners"], errors="coerce").clip(lower=1)
     df = df[df["total_owners"] <= 4]
+    # Numerics
     df["kms_run"] = pd.to_numeric(df["kms_run"], errors="coerce")
-    if "yr_mfr" not in df.columns: df["yr_mfr"] = pd.to_numeric(df["year"], errors="coerce")
-    else: df["yr_mfr"] = pd.to_numeric(df["yr_mfr"], errors="coerce")
+    if "yr_mfr" not in df.columns:
+        df["yr_mfr"] = pd.to_numeric(df.get("year"), errors="coerce")
+    else:
+        df["yr_mfr"] = pd.to_numeric(df["yr_mfr"], errors="coerce")
     return df.dropna(subset=["make","model"])
 
 @st.cache_data(show_spinner=False)
-def load_df(uploaded_file, candidates):
-    if uploaded_file is not None:
-        return _normalize_df(pd.read_csv(uploaded_file, low_memory=False))
+def load_df(candidates):
+    """Try local paths first, then GitHub RAW. No upload UI."""
+    last_err = None
     for c in candidates:
         try:
             if isinstance(c, Path) and c.exists():
                 return _normalize_df(pd.read_csv(c.as_posix(), low_memory=False))
             elif isinstance(c, str) and c.startswith(("http://","https://")):
                 return _normalize_df(pd.read_csv(c, low_memory=False))
-        except Exception: continue
-    raise FileNotFoundError("Dataset not found. Upload it below or place 'Used_Car_Price_Prediction.csv' next to app.py.")
+        except Exception as e:
+            last_err = e
+            continue
+    if last_err:
+        raise last_err
+    raise FileNotFoundError("Dataset not found in any candidate locations.")
 
 
 # ============ MODEL LOADER ============
@@ -160,23 +180,19 @@ st.markdown(
     """, unsafe_allow_html=True
 )
 
-with st.expander("📄 Dataset source (optional)"):
-    st.write("Upload your dataset if the app can’t find it locally or via GitHub RAW.")
-    uploaded_csv = st.file_uploader("Upload Used_Car_Price_Prediction.csv", type=["csv"])
-
-# Load data & model
+# Load data & model (quietly)
 try:
-    df_all = load_df(uploaded_csv, CSV_CANDIDATES)
+    df_all = load_df(CSV_CANDIDATES)
 except Exception as e:
-    st.error("⚠️ Could not load dataset.")
-    st.code(repr(e))
+    st.error("⚠️ Could not load dataset. Place 'Used_Car_Price_Prediction.csv' next to app.py or ensure the GitHub RAW URL is reachable.")
+    with st.expander("Details"): st.code(repr(e))
     st.stop()
 
 try:
     pipe = load_model(MODEL_PATH)
 except Exception as e:
     pipe = None
-    st.error("⚠️ Model failed to load.")
+    st.error("⚠️ Model failed to load. Ensure 'results/models/RF_app_best_model.pkl' exists.")
     with st.expander("Details"): st.code(repr(e))
 
 
@@ -184,33 +200,38 @@ except Exception as e:
 st.markdown('<div class="dw-card">', unsafe_allow_html=True)
 st.subheader("Enter Vehicle Details", anchor=False)
 
+# Make → Model
 makes = options_from(df_all, "make") or ["mercedes"]
-make = st.selectbox("Car Brand (Make)", makes)
+make = st.selectbox("Car Brand (Make)", makes, index=0)
 df_make = filtered(df_all, make=make)
 
 models = options_from(df_make, "model") or ["c-class"]
-model = st.selectbox("Car Model", models)
+model = st.selectbox("Car Model", models, index=0)
 df_car = filtered(df_make, model=model)
 
+# Fuel / Transmission / Body from the selected car subset
 fuels = options_from(df_car, "fuel_type") or ["petrol"]
-fuel_type = st.selectbox("Fuel Type", fuels)
+fuel_type = st.selectbox("Fuel Type", fuels, index=0)
 
 transmissions = options_from(df_car, "transmission") or ["manual"]
-transmission = st.selectbox("Transmission", transmissions)
+transmission = st.selectbox("Transmission", transmissions, index=0)
 
 bodies = options_from(df_car, "body_type") or ["sedan"]
-body_type = st.selectbox("Body Type", bodies)
+body_type = st.selectbox("Body Type", bodies, index=0)
 
+# Owners from the filtered rows (strictly from dataset, capped at 4)
 df_car_ftb = filtered(df_car, fuel_type=fuel_type, transmission=transmission, body_type=body_type)
 owner_opts = sorted(pd.Series(df_car_ftb["total_owners"].dropna().astype(int)).unique().tolist() or [1,2,3,4])
-total_owners = st.selectbox("Number of Previous Owners", owner_opts)
+total_owners = st.selectbox("Number of Previous Owners", owner_opts, index=min(len(owner_opts)//2, len(owner_opts)-1))
 
+# State → City
 states = options_from(df_all, "registered_state") or ["berlin"]
-registered_state = st.selectbox("Registered State", states)
+registered_state = st.selectbox("Registered State", states, index=0)
 df_state = filtered(df_all, registered_state=registered_state)
 cities = options_from(df_state, "registered_city") or ["berlin"]
-city = st.selectbox("Registered City", cities)
+city = st.selectbox("Registered City", cities, index=0)
 
+# Year & KMs (bounds from filtered car subset; robust clamping)
 this_year = datetime.datetime.now().year
 yr_series = df_car_ftb["yr_mfr"].dropna().astype(int) if not df_car_ftb.empty else df_car["yr_mfr"].dropna().astype(int)
 yr_min = int(yr_series.min()) if not yr_series.empty else 1990
@@ -224,6 +245,7 @@ kms_run = st.number_input("Kilometers Driven", min_value=kms_min, max_value=kms_
 
 st.markdown('</div>', unsafe_allow_html=True)
 
+# Preview
 car_age = max(0, this_year - int(yr_mfr))
 st.markdown(
     f"""
@@ -236,10 +258,14 @@ st.markdown(
     """, unsafe_allow_html=True
 )
 
+# Row for model (must match training pipeline)
 X_one = pd.DataFrame([{
-    "yr_mfr": int(yr_mfr), "kms_run": float(kms_run), "make": make, "model": model,
+    "yr_mfr": int(yr_mfr),
+    "kms_run": float(kms_run),
+    "make": make, "model": model,
     "fuel_type": fuel_type, "transmission": transmission, "body_type": body_type,
-    "total_owners": int(total_owners), "city": city, "registered_state": registered_state,
+    "total_owners": int(total_owners),
+    "city": city, "registered_state": registered_state,
     "car_age": car_age,
 }])
 
@@ -247,34 +273,42 @@ X_one = pd.DataFrame([{
 clicked = st.button("Estimate Value", use_container_width=True)
 if clicked:
     if pipe is None:
-        st.error("⚠️ No model loaded.")
+        st.error("⚠️ No model loaded — cannot predict.")
     else:
         try:
+            # Base model prediction (INR)
             base_inr = float(pipe.predict(X_one)[0])
-            depr_rate = 0.07
+
+            # Monotonic correction: more owners → lower price
+            depr_rate = 0.07  # 7% per additional owner
             n_extra = max(0, int(total_owners) - 1)
             adj_factor = (1.0 - depr_rate) ** n_extra
             adj_inr = max(0.0, base_inr * adj_factor)
+
+            # Live FX
             rate_inr_eur, rate_eur_inr, ts = fetch_fx_inr_eur()
-            adj_eur  = adj_inr * rate_inr_eur
+            base_eur = base_inr * rate_inr_eur
+            adj_eur  = adj_inr  * rate_inr_eur
+
             st.balloons()
             st.markdown(
                 f"""
                 <div class="dw-card">
-                  <div class="dw-price">
+                  <div class="dw-price" style="margin-bottom:.4rem;">
                     💰 Estimated Resale Value:<br/>
                     ₹{adj_inr:,.0f} <span style="opacity:.85;">(€{adj_eur:,.0f})</span>
                   </div>
                   <div class="dw-kicker">
-                    Owners adj: −7% × {n_extra} → ×{adj_factor:.3f}<br/>
-                    FX: 1 INR = {rate_inr_eur:.6f} EUR • Updated: {ts}
+                    Base: ₹{base_inr:,.0f} ( €{base_eur:,.0f} ) • Owners adj: −7% × {n_extra} → ×{adj_factor:.3f}<br/>
+                    FX: 1 INR = {rate_inr_eur:.6f} EUR • 1 EUR = {rate_eur_inr:.4f} INR • Updated: {ts}
                   </div>
                 </div>
                 """, unsafe_allow_html=True
             )
         except Exception as e:
-            st.error("Prediction failed.")
-            with st.expander("Error details"): st.code(repr(e))
+            st.error("Prediction failed. The model may expect different columns/encodings.")
+            with st.expander("Error details"):
+                st.code(repr(e))
 
-# ============ FOOTER ============
-st.markdown('<div class="dw-kicker">DriveWorth • RF model • Dataset-driven UI • Live INR→EUR</div>', unsafe_allow_html=True)
+# Footer
+st.markdown('<div class="dw-kicker">DriveWorth • RF model prediction • Dataset-driven UI • Live INR→EUR</div>', unsafe_allow_html=True)
