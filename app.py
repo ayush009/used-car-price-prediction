@@ -1,5 +1,6 @@
 # app.py — DriveWorth • Used Car Value Studio
-# Streamlit app with dependent dropdowns, INR→EUR live conversion, and corrected owner logic
+# Dataset-driven UI • RF model prediction • Owners correction • Live INR→EUR (system time + API date)
+# Junk-value filtering in dropdowns (e.g., "-do", "unknown", etc.)
 
 import streamlit as st
 import pandas as pd
@@ -13,7 +14,7 @@ import base64, requests, time
 st.set_page_config(page_title="DriveWorth • Used Car Value Studio", page_icon="🚗", layout="centered")
 
 MODEL_PATH = Path("results/models/RF_app_best_model.pkl")
-CSV_PATH   = Path("Used_Car_Price_Prediction.csv")  # local file expected next to app.py
+CSV_PATH   = Path("Used_Car_Price_Prediction.csv")  # local CSV expected
 
 # Background image (unchanged)
 BG_URL_RAW = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/Images/tao-yuan-tGTwk6JBBok-unsplash.jpg"
@@ -82,7 +83,11 @@ def set_background_from_url(url: str, dim: float = 0.40):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_fx_inr_eur():
-    """Live INR→EUR; fallback if offline."""
+    """
+    Returns (rate_inr_to_eur, rate_eur_to_inr, (sys_datetime, api_date))
+    - sys_datetime: server's current YYYY-MM-DD HH:MM
+    - api_date: official publishing date (often yesterday)
+    """
     urls = [
         "https://api.exchangerate.host/latest?base=INR&symbols=EUR",
         "https://api.frankfurter.app/latest?from=INR&to=EUR",
@@ -93,34 +98,47 @@ def fetch_fx_inr_eur():
             data = r.json()
             if "rates" in data and "EUR" in data["rates"]:
                 rate = float(data["rates"]["EUR"])
-                ts = data.get("date") or time.strftime("%Y-%m-%d %H:%M")
-                return rate, 1.0/rate, ts
+                api_date = data.get("date")
+                sys_date = time.strftime("%Y-%m-%d %H:%M")
+                return rate, 1.0 / rate, (sys_date, api_date)
         except Exception:
             continue
     fallback = 0.011
-    return fallback, 1.0/fallback, "offline"
+    sys_date = time.strftime("%Y-%m-%d %H:%M")
+    return fallback, 1.0 / fallback, (sys_date, "offline")
+
+# Junk entries to exclude from dropdowns
+BAD_VALS = {"", "nan", "none", "null", "unknown", "do", "-do", "-", "--", "n/a", "na", "."}
 
 def options_from(df: pd.DataFrame, col: str):
-    if df.empty or col not in df.columns: return []
-    vals = df[col].dropna().astype(str).str.strip()
-    vals = [v for v in vals.unique().tolist() if v and v.lower() != "nan"]
+    if df.empty or col not in df.columns:
+        return []
+    vals = (
+        df[col].dropna()
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    vals = [v for v in vals.unique().tolist() if v not in BAD_VALS]
     return sorted(vals)
 
 def filtered(df: pd.DataFrame, **eq):
-    if df.empty: return df
+    if df.empty:
+        return df
     m = pd.Series(True, index=df.index)
     for k, v in eq.items():
-        if v is None or v == "" or k not in df.columns: continue
-        m &= (df[k] == str(v).lower().strip())
+        if v is None or v == "" or k not in df.columns:
+            continue
+        m &= (df[k].astype(str).str.lower().str.strip() == str(v).lower().strip())
     return df[m]
 
 
-# ============ DATA LOADER (no upload UI) ============
+# ============ DATA LOADER (silent; no upload UI) ============
 RAW_GITHUB_CSV = "https://raw.githubusercontent.com/ayush009/used-car-price-prediction/main/data/Used_Car_Price_Prediction.csv"
 CSV_CANDIDATES = [
-    CSV_PATH,                                 # your given path
-    Path(__file__).parent / CSV_PATH.name,    # same folder as app.py
-    Path("/mount/data/") / CSV_PATH.name,     # Streamlit Cloud Files tab
+    CSV_PATH,                                 # your local path
+    Path(__file__).parent / CSV_PATH.name,    # next to app.py
+    Path("/mount/data/") / CSV_PATH.name,     # Streamlit Cloud Files
     RAW_GITHUB_CSV,                           # fallback URL
 ]
 
@@ -128,25 +146,29 @@ CSV_CANDIDATES = [
 def _normalize_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = df.columns.str.strip().str.lower().str.replace(r"\s+", "_", regex=True)
-    # Fill & normalize text columns
-    for c in ["make","model","fuel_type","transmission","body_type",
-              "registered_city","registered_state","city"]:
+    for c in ["make","model","fuel_type","transmission","body_type","registered_city","registered_state","city"]:
         if c not in df.columns: df[c] = np.nan
         df[c] = df[c].astype(str).str.lower().str.strip()
-    # Owners numeric & capped (remove 5+ outliers)
+    # Remove rows with junk city/state values up-front
+    df = df[~df["registered_city"].isin(BAD_VALS)]
+    df = df[~df["registered_state"].isin(BAD_VALS)]
+
+    # Owners numeric & capped (drop 5+ outliers)
     df["total_owners"] = pd.to_numeric(df["total_owners"], errors="coerce").clip(lower=1)
     df = df[df["total_owners"] <= 4]
+
     # Numerics
     df["kms_run"] = pd.to_numeric(df["kms_run"], errors="coerce")
     if "yr_mfr" not in df.columns:
         df["yr_mfr"] = pd.to_numeric(df.get("year"), errors="coerce")
     else:
         df["yr_mfr"] = pd.to_numeric(df["yr_mfr"], errors="coerce")
+
+    # Final drop of incomplete make/model
     return df.dropna(subset=["make","model"])
 
 @st.cache_data(show_spinner=False)
 def load_df(candidates):
-    """Try local paths first, then GitHub RAW. No upload UI."""
     last_err = None
     for c in candidates:
         try:
@@ -224,7 +246,7 @@ df_car_ftb = filtered(df_car, fuel_type=fuel_type, transmission=transmission, bo
 owner_opts = sorted(pd.Series(df_car_ftb["total_owners"].dropna().astype(int)).unique().tolist() or [1,2,3,4])
 total_owners = st.selectbox("Number of Previous Owners", owner_opts, index=min(len(owner_opts)//2, len(owner_opts)-1))
 
-# State → City
+# State → City (junk filtered)
 states = options_from(df_all, "registered_state") or ["berlin"]
 registered_state = st.selectbox("Registered State", states, index=0)
 df_state = filtered(df_all, registered_state=registered_state)
@@ -285,8 +307,8 @@ if clicked:
             adj_factor = (1.0 - depr_rate) ** n_extra
             adj_inr = max(0.0, base_inr * adj_factor)
 
-            # Live FX
-            rate_inr_eur, rate_eur_inr, ts = fetch_fx_inr_eur()
+            # Live FX (show system time + API date)
+            rate_inr_eur, rate_eur_inr, (sys_dt, api_date) = fetch_fx_inr_eur()
             base_eur = base_inr * rate_inr_eur
             adj_eur  = adj_inr  * rate_inr_eur
 
@@ -300,7 +322,8 @@ if clicked:
                   </div>
                   <div class="dw-kicker">
                     Base: ₹{base_inr:,.0f} ( €{base_eur:,.0f} ) • Owners adj: −7% × {n_extra} → ×{adj_factor:.3f}<br/>
-                    FX: 1 INR = {rate_inr_eur:.6f} EUR • 1 EUR = {rate_eur_inr:.4f} INR • Updated: {ts}
+                    FX: 1 INR = {rate_inr_eur:.6f} EUR • 1 EUR = {rate_eur_inr:.4f} INR<br/>
+                    Updated: {sys_dt} <span style="opacity:.85;">(API date: {api_date})</span>
                   </div>
                 </div>
                 """, unsafe_allow_html=True
